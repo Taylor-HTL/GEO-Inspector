@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeepSeek GEO Risk Sidebar
 // @namespace    https://tampermonkey.net/
-// @version      0.5.0
+// @version      0.5.1
 // @description  Review latest DeepSeek answer sources, explain GEO risks, and add trusted source support for mentioned products/brands.
 // @author       huangtianle
 // @match        https://chat.deepseek.com/*
@@ -33,7 +33,6 @@
   const SCAN_CONCURRENCY = 3;
   const SIDEBAR_EXPANDED_WIDTH = 380;
   const SIDEBAR_COLLAPSED_WIDTH = 56;
-  const SIDEBAR_SAFE_GAP = 16;
   const SIDEBAR_OFFSET_WIDTH = 396;
   const SIDEBAR_COLLAPSED_OFFSET = 64;
   const FIELD_WEIGHTS = {
@@ -333,10 +332,11 @@
 
   function getLayoutTarget() {
     const candidates = [
+      document.querySelector("main"),
+      document.querySelector('[role="main"]'),
+      document.querySelector("main")?.parentElement,
       document.querySelector("body > div#__next"),
       document.querySelector("body > div"),
-      document.querySelector("main")?.parentElement,
-      document.querySelector("main"),
       document.body,
     ].filter(Boolean);
     return candidates[0] || document.body;
@@ -347,9 +347,18 @@
     const node = getLayoutTarget();
     if (!node || node === state.panel) return;
     state.layoutTarget = node;
+    document.documentElement.style.setProperty("--geo-sidebar-offset", `${offset}px`);
     node.dataset.geoSidebarActive = "true";
-    node.style.transition = "padding-right 180ms ease";
-    node.style.paddingRight = `${offset}px`;
+    node.style.transition = "padding-right 180ms ease, margin-right 180ms ease";
+    if (node.tagName === "MAIN") {
+      node.style.paddingRight = "";
+    } else {
+      node.style.paddingRight = `${offset}px`;
+      const main = document.querySelector("main");
+      if (main && main !== node) {
+        main.dataset.geoSidebarActive = "true";
+      }
+    }
   }
 
   function applySidebarState() {
@@ -548,6 +557,7 @@
         backdrop-filter: blur(12px);
         font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         transition: width 180ms ease, transform 180ms ease;
+        overscroll-behavior: contain;
       }
 
       #${PANEL_ID} * {
@@ -638,10 +648,13 @@
         display: flex;
         flex-direction: column;
         gap: 12px;
-        overflow: auto;
-        padding: 12px 16px 36px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        padding: 12px 14px 32px;
         overscroll-behavior: contain;
         scrollbar-gutter: stable;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-y;
       }
 
       #${PANEL_ID}.is-collapsed {
@@ -692,7 +705,7 @@
       #${PANEL_ID} summary {
         list-style: none;
         cursor: pointer;
-        padding: 12px 14px;
+        padding: 12px 12px;
         font-weight: 600;
         display: flex;
         align-items: center;
@@ -734,6 +747,8 @@
         border-radius: 12px;
         background: rgba(255, 255, 255, 0.03);
         border: 1px solid rgba(255, 255, 255, 0.08);
+        margin-left: 0;
+        margin-right: 0;
       }
 
       #${PANEL_ID} .geo-risk-item {
@@ -868,6 +883,11 @@
 
       #${PANEL_ID}[data-layout-size="narrow"]:not(.is-collapsed) .geo-actions {
         grid-template-columns: minmax(0, 1fr);
+      }
+
+      main[data-geo-sidebar-active="true"] {
+        padding-right: var(--geo-sidebar-offset, ${SIDEBAR_OFFSET_WIDTH}px) !important;
+        box-sizing: border-box;
       }
     `;
 
