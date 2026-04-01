@@ -1,10 +1,14 @@
 // ==UserScript==
 // @name         DeepSeek GEO Risk Sidebar
 // @namespace    https://tampermonkey.net/
-// @version      0.4.0
+// @version      0.4.1
 // @description  Review latest DeepSeek answer sources, explain GEO risks, and add trusted source support for mentioned products/brands.
 // @author       huangtianle
 // @match        https://chat.deepseek.com/*
+// @homepageURL  https://github.com/Taylor-HTL/GEO-Inspector
+// @supportURL   https://github.com/Taylor-HTL/GEO-Inspector/issues
+// @updateURL    https://raw.githubusercontent.com/Taylor-HTL/GEO-Inspector/main/userscripts/deepseek-geo-risk.user.js
+// @downloadURL  https://raw.githubusercontent.com/Taylor-HTL/GEO-Inspector/main/userscripts/deepseek-geo-risk.user.js
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
