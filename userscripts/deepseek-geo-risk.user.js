@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeepSeek GEO Risk Sidebar
 // @namespace    https://tampermonkey.net/
-// @version      0.6.1
+// @version      0.6.2
 // @description  Review latest DeepSeek answer sources, explain GEO risks, and add trusted source support for mentioned products/brands.
 // @author       huangtianle
 // @match        https://chat.deepseek.com/*
@@ -376,19 +376,40 @@
     const main = document.querySelector("main") || document.querySelector('[role="main"]');
     if (!main) return null;
 
-    const candidates = Array.from(main.querySelectorAll("div, section"))
-      .filter((node) => !node.closest(`#${PANEL_ID}`))
-      .map((node) => ({ node, rect: node.getBoundingClientRect() }))
-      .filter(({ rect }) => rect.width >= 420 && rect.height >= 300)
-      .filter(({ rect }) => rect.left > 180 && rect.right < window.innerWidth - 80)
-      .sort((a, b) => b.rect.width - a.rect.width);
+    const anchors = [
+      findChatTextarea(),
+      getLatestDeepSeekAssistantMessage(),
+    ].filter(Boolean);
 
-    const centered = candidates.find(({ rect }) => {
-      const center = rect.left + rect.width / 2;
-      return Math.abs(center - window.innerWidth / 2) < window.innerWidth * 0.15;
+    const candidates = [];
+    anchors.forEach((anchor) => {
+      let node = anchor;
+      while (node && node !== main) {
+        if (node instanceof HTMLElement && !node.closest(`#${PANEL_ID}`)) {
+          candidates.push(node);
+        }
+        node = node.parentElement;
+      }
     });
 
-    return centered?.node || candidates[0]?.node || main;
+    const deduped = Array.from(new Set(candidates));
+    const mainRect = main.getBoundingClientRect();
+    const ranked = deduped
+      .map((node) => ({ node, rect: node.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.width >= 420 && rect.height >= 120)
+      .filter(({ rect }) => rect.width < mainRect.width - 24)
+      .filter(({ rect }) => rect.left >= mainRect.left && rect.right <= mainRect.right + 8)
+      .map(({ node, rect }) => {
+        const center = rect.left + rect.width / 2;
+        const centeredScore = Math.max(0, 200 - Math.abs(center - (mainRect.left + mainRect.width / 2)));
+        const widthScore = rect.width >= 560 && rect.width <= 1080 ? 200 : 80;
+        const inputScore = node.contains(findChatTextarea()) ? 120 : 0;
+        const messageScore = node.contains(getLatestDeepSeekAssistantMessage()) ? 120 : 0;
+        return { node, score: centeredScore + widthScore + inputScore + messageScore };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return ranked[0]?.node || main.firstElementChild || main;
   }
 
   function clearPageLayoutOffset() {
@@ -412,6 +433,9 @@
       delete node.dataset.geoSidebarActive;
       node.style.transition = "";
       node.style.paddingRight = "";
+      node.style.paddingLeft = "";
+      node.style.justifyContent = "";
+      node.style.display = "";
       node.style.boxSizing = "";
     });
     state.layoutTargets = [];
@@ -421,29 +445,29 @@
   function applyPageLayoutOffset(collapsed) {
     clearPageLayoutOffset();
 
-    const appRoot = document.querySelector("body > div#__next") || document.querySelector("body > div");
-    if (appRoot) {
-      appRoot.dataset.geoSidebarActive = "true";
-      appRoot.style.transition = "padding-right 180ms ease";
-      appRoot.style.boxSizing = "border-box";
-      appRoot.style.paddingRight = collapsed ? `${SIDEBAR_COLLAPSED_OFFSET}px` : `${loadSidebarWidth() + 16}px`;
-      state.layoutTargets = [appRoot];
+    const main = document.querySelector("main") || document.querySelector('[role="main"]');
+    const sidebarWidth = collapsed ? SIDEBAR_COLLAPSED_WIDTH : loadSidebarWidth();
+    const rightOffset = collapsed ? SIDEBAR_COLLAPSED_OFFSET : sidebarWidth + LAYOUT_SAFE_GAP;
+    if (main) {
+      main.dataset.geoSidebarActive = "true";
+      main.style.transition = "padding-right 180ms ease";
+      main.style.boxSizing = "border-box";
+      main.style.paddingRight = `${rightOffset}px`;
+      state.layoutTargets = [main];
     }
 
     const mainColumn = findMainConversationColumn();
     if (!mainColumn) return;
 
-    const sidebarWidth = collapsed ? SIDEBAR_COLLAPSED_WIDTH : loadSidebarWidth();
     const leftSidebarWidth = getLeftSidebarWidth();
     const availableWidth = window.innerWidth - leftSidebarWidth - sidebarWidth - LAYOUT_SAFE_GAP * 2;
     const maxWidth = Math.max(MAIN_COLUMN_MIN_WIDTH, Math.round(availableWidth));
-    const rightOffset = collapsed ? SIDEBAR_COLLAPSED_OFFSET : sidebarWidth + LAYOUT_SAFE_GAP;
 
     mainColumn.dataset.geoMainColumn = "true";
-    mainColumn.style.transition = "max-width 180ms ease, margin-right 180ms ease";
+    mainColumn.style.transition = "max-width 180ms ease, width 180ms ease";
     mainColumn.style.boxSizing = "border-box";
     mainColumn.style.marginLeft = "auto";
-    mainColumn.style.marginRight = `${rightOffset}px`;
+    mainColumn.style.marginRight = "auto";
     mainColumn.style.maxWidth = `${maxWidth}px`;
     mainColumn.style.width = "100%";
 
