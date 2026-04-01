@@ -568,7 +568,11 @@
         right: 0;
         width: ${SIDEBAR_EXPANDED_WIDTH}px;
         height: 100vh;
-        overflow: hidden;
+        height: 100dvh;
+        max-height: 100vh;
+        max-height: 100dvh;
+        overflow-x: hidden;
+        overflow-y: auto;
         z-index: 999999;
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 0;
@@ -582,6 +586,8 @@
         font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         transition: width 180ms ease, transform 180ms ease;
         overscroll-behavior: contain;
+        overscroll-behavior-y: contain;
+        -webkit-overflow-scrolling: touch;
       }
 
       #${PANEL_ID} * {
@@ -605,6 +611,11 @@
         padding: 14px 16px 12px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         user-select: none;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: rgba(15, 23, 42, 0.96);
+        backdrop-filter: blur(12px);
       }
 
       #${PANEL_ID} .geo-panel-title {
@@ -664,17 +675,22 @@
         padding: 10px 16px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         color: #b8c6da;
+        position: sticky;
+        top: 74px;
+        z-index: 1;
+        background: rgba(15, 23, 42, 0.96);
+        backdrop-filter: blur(12px);
       }
 
       #${PANEL_ID} .geo-panel-body {
-        flex: 1 1 auto;
-        min-height: 0;
+        flex: 0 0 auto;
+        min-height: auto;
         display: flex;
         flex-direction: column;
         gap: 12px;
         overflow-x: hidden;
-        overflow-y: auto;
-        padding: 12px 14px 32px;
+        overflow-y: visible;
+        padding: 12px 14px calc(32px + env(safe-area-inset-bottom, 0px));
         overscroll-behavior: contain;
         scrollbar-gutter: stable;
         -webkit-overflow-scrolling: touch;
@@ -714,6 +730,10 @@
 
       #${PANEL_ID}.is-collapsed .geo-panel-actions .geo-btn[data-action="toggle-sidebar"] {
         width: 100%;
+      }
+
+      #${PANEL_ID}.is-collapsed .geo-status {
+        top: 0;
       }
 
       #${PANEL_ID} details {
