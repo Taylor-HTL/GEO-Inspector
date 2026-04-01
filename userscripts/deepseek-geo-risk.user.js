@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeepSeek GEO Risk Sidebar
 // @namespace    https://tampermonkey.net/
-// @version      0.6.0
+// @version      0.6.1
 // @description  Review latest DeepSeek answer sources, explain GEO risks, and add trusted source support for mentioned products/brands.
 // @author       huangtianle
 // @match        https://chat.deepseek.com/*
@@ -38,6 +38,8 @@
   const SIDEBAR_COLLAPSED_OFFSET = 64;
   const SIDEBAR_MIN_WIDTH = 320;
   const SIDEBAR_MAX_WIDTH = 720;
+  const LAYOUT_SAFE_GAP = 24;
+  const MAIN_COLUMN_MIN_WIDTH = 520;
   const FIELD_WEIGHTS = {
     title: 40,
     url: 24,
@@ -109,6 +111,7 @@
     viewportHandlerBound: false,
     layoutTargets: [],
     isResizing: false,
+    layoutMainColumn: null,
   };
 
   function log(...args) {
@@ -348,59 +351,103 @@
     autoResizeTextarea(textarea);
   }
 
-  function getLayoutTargets() {
-    return Array.from(
-      new Set(
-        [
-          document.body,
-          document.querySelector("body > div#__next"),
-          document.querySelector("body > div"),
-          document.querySelector('[role="main"]'),
-          document.querySelector("main"),
-          document.querySelector("main")?.parentElement,
-        ].filter(Boolean)
-      )
-    );
+  function getLeftSidebarWidth() {
+    const main = document.querySelector("main");
+    const leftSidebar = document.querySelector("body > div")?.firstElementChild;
+    const candidates = [
+      document.querySelector("aside"),
+      document.querySelector('[data-testid*="sidebar"]'),
+      document.querySelector('[class*="sidebar"]'),
+      leftSidebar,
+      main?.previousElementSibling,
+    ].filter((node) => node && node !== state.panel);
+
+    for (const node of candidates) {
+      const rect = node.getBoundingClientRect();
+      if (rect.width >= 180 && rect.left <= 24) {
+        return Math.round(rect.width);
+      }
+    }
+
+    return 280;
+  }
+
+  function findMainConversationColumn() {
+    const main = document.querySelector("main") || document.querySelector('[role="main"]');
+    if (!main) return null;
+
+    const candidates = Array.from(main.querySelectorAll("div, section"))
+      .filter((node) => !node.closest(`#${PANEL_ID}`))
+      .map((node) => ({ node, rect: node.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.width >= 420 && rect.height >= 300)
+      .filter(({ rect }) => rect.left > 180 && rect.right < window.innerWidth - 80)
+      .sort((a, b) => b.rect.width - a.rect.width);
+
+    const centered = candidates.find(({ rect }) => {
+      const center = rect.left + rect.width / 2;
+      return Math.abs(center - window.innerWidth / 2) < window.innerWidth * 0.15;
+    });
+
+    return centered?.node || candidates[0]?.node || main;
   }
 
   function clearPageLayoutOffset() {
+    const mainColumn = state.layoutMainColumn;
+    if (mainColumn) {
+      delete mainColumn.dataset.geoMainColumn;
+      mainColumn.style.transition = "";
+      mainColumn.style.marginLeft = "";
+      mainColumn.style.marginRight = "";
+      mainColumn.style.maxWidth = "";
+      mainColumn.style.width = "";
+      mainColumn.style.boxSizing = "";
+      mainColumn.style.position = "";
+      mainColumn.style.left = "";
+      mainColumn.style.right = "";
+      mainColumn.style.transform = "";
+    }
+
     state.layoutTargets.forEach((node) => {
       if (!node) return;
       delete node.dataset.geoSidebarActive;
       node.style.transition = "";
       node.style.paddingRight = "";
-      node.style.marginRight = "";
-      node.style.width = "";
-      node.style.maxWidth = "";
       node.style.boxSizing = "";
     });
     state.layoutTargets = [];
+    state.layoutMainColumn = null;
   }
 
   function applyPageLayoutOffset(collapsed) {
-    const offset = collapsed ? SIDEBAR_COLLAPSED_OFFSET : loadSidebarWidth() + 16;
-    const targets = getLayoutTargets().filter((node) => node !== state.panel);
     clearPageLayoutOffset();
-    document.documentElement.style.setProperty("--geo-sidebar-offset", `${offset}px`);
-    targets.forEach((node) => {
-      node.dataset.geoSidebarActive = "true";
-      node.style.transition = "padding-right 180ms ease, margin-right 180ms ease, width 180ms ease";
-      node.style.boxSizing = "border-box";
 
-      if (node === document.body) {
-        node.style.paddingRight = `${offset}px`;
-        return;
-      }
+    const appRoot = document.querySelector("body > div#__next") || document.querySelector("body > div");
+    if (appRoot) {
+      appRoot.dataset.geoSidebarActive = "true";
+      appRoot.style.transition = "padding-right 180ms ease";
+      appRoot.style.boxSizing = "border-box";
+      appRoot.style.paddingRight = collapsed ? `${SIDEBAR_COLLAPSED_OFFSET}px` : `${loadSidebarWidth() + 16}px`;
+      state.layoutTargets = [appRoot];
+    }
 
-      if (node.tagName === "MAIN") {
-        node.style.marginRight = `${offset}px`;
-        node.style.maxWidth = `calc(100% - ${offset}px)`;
-        return;
-      }
+    const mainColumn = findMainConversationColumn();
+    if (!mainColumn) return;
 
-      node.style.paddingRight = `${offset}px`;
-    });
-    state.layoutTargets = targets;
+    const sidebarWidth = collapsed ? SIDEBAR_COLLAPSED_WIDTH : loadSidebarWidth();
+    const leftSidebarWidth = getLeftSidebarWidth();
+    const availableWidth = window.innerWidth - leftSidebarWidth - sidebarWidth - LAYOUT_SAFE_GAP * 2;
+    const maxWidth = Math.max(MAIN_COLUMN_MIN_WIDTH, Math.round(availableWidth));
+    const rightOffset = collapsed ? SIDEBAR_COLLAPSED_OFFSET : sidebarWidth + LAYOUT_SAFE_GAP;
+
+    mainColumn.dataset.geoMainColumn = "true";
+    mainColumn.style.transition = "max-width 180ms ease, margin-right 180ms ease";
+    mainColumn.style.boxSizing = "border-box";
+    mainColumn.style.marginLeft = "auto";
+    mainColumn.style.marginRight = `${rightOffset}px`;
+    mainColumn.style.maxWidth = `${maxWidth}px`;
+    mainColumn.style.width = "100%";
+
+    state.layoutMainColumn = mainColumn;
   }
 
   function applySidebarState() {
