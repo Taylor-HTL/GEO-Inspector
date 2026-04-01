@@ -33,7 +33,7 @@
   const SCAN_CONCURRENCY = 3;
   const SIDEBAR_EXPANDED_WIDTH = 380;
   const SIDEBAR_COLLAPSED_WIDTH = 56;
-  const SIDEBAR_OFFSET_WIDTH = 396;
+  const SIDEBAR_OFFSET_WIDTH = 420;
   const SIDEBAR_COLLAPSED_OFFSET = 64;
   const FIELD_WEIGHTS = {
     title: 40,
@@ -105,6 +105,7 @@
     entityStatus: "等待实体识别...",
     viewportHandlerBound: false,
     layoutTarget: null,
+    previousLayoutOffset: 0,
   };
 
   function log(...args) {
@@ -347,17 +348,19 @@
     const node = getLayoutTarget();
     if (!node || node === state.panel) return;
     state.layoutTarget = node;
+    state.previousLayoutOffset = offset;
     document.documentElement.style.setProperty("--geo-sidebar-offset", `${offset}px`);
+    document.documentElement.dataset.geoSidebarActive = "true";
+    document.body.dataset.geoSidebarActive = "true";
+    document.body.style.paddingRight = `${offset}px`;
+    document.body.style.transition = "padding-right 180ms ease, margin-right 180ms ease";
     node.dataset.geoSidebarActive = "true";
     node.style.transition = "padding-right 180ms ease, margin-right 180ms ease";
-    if (node.tagName === "MAIN") {
-      node.style.paddingRight = "";
-    } else {
-      node.style.paddingRight = `${offset}px`;
-      const main = document.querySelector("main");
-      if (main && main !== node) {
-        main.dataset.geoSidebarActive = "true";
-      }
+    node.style.paddingRight = "";
+    const main = document.querySelector("main");
+    if (main) {
+      main.dataset.geoSidebarActive = "true";
+      main.style.paddingRight = "";
     }
   }
 
@@ -544,7 +547,8 @@
         right: 0;
         width: ${SIDEBAR_EXPANDED_WIDTH}px;
         height: 100vh;
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
         z-index: 999999;
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 0;
@@ -649,7 +653,7 @@
         flex-direction: column;
         gap: 12px;
         overflow-x: hidden;
-        overflow-y: auto;
+        overflow-y: visible;
         padding: 12px 14px 32px;
         overscroll-behavior: contain;
         scrollbar-gutter: stable;
@@ -711,6 +715,12 @@
         align-items: center;
         justify-content: space-between;
         gap: 12px;
+      }
+
+      #${PANEL_ID} summary > span:first-child {
+        flex: 1 1 auto;
+        min-width: 0;
+        text-align: left;
       }
 
       #${PANEL_ID} summary::-webkit-details-marker {
@@ -885,7 +895,9 @@
         grid-template-columns: minmax(0, 1fr);
       }
 
-      main[data-geo-sidebar-active="true"] {
+      main[data-geo-sidebar-active="true"],
+      body[data-geo-sidebar-active="true"],
+      html[data-geo-sidebar-active="true"] body {
         padding-right: var(--geo-sidebar-offset, ${SIDEBAR_OFFSET_WIDTH}px) !important;
         box-sizing: border-box;
       }
