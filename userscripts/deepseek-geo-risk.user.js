@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeepSeek GEO Risk Sidebar
 // @namespace    https://tampermonkey.net/
-// @version      0.6.2
+// @version      0.6.3
 // @description  Review latest DeepSeek answer sources, explain GEO risks, and add trusted source support for mentioned products/brands.
 // @author       huangtianle
 // @match        https://chat.deepseek.com/*
@@ -434,8 +434,13 @@
       node.style.transition = "";
       node.style.paddingRight = "";
       node.style.paddingLeft = "";
+      node.style.marginRight = "";
       node.style.justifyContent = "";
       node.style.display = "";
+      node.style.width = "";
+      node.style.maxWidth = "";
+      node.style.minWidth = "";
+      node.style.overflowX = "";
       node.style.boxSizing = "";
     });
     state.layoutTargets = [];
@@ -445,16 +450,32 @@
   function applyPageLayoutOffset(collapsed) {
     clearPageLayoutOffset();
 
+    const appRoot = document.querySelector("body > div#__next") || document.querySelector("body > div");
     const main = document.querySelector("main") || document.querySelector('[role="main"]');
     const sidebarWidth = collapsed ? SIDEBAR_COLLAPSED_WIDTH : loadSidebarWidth();
     const rightOffset = collapsed ? SIDEBAR_COLLAPSED_OFFSET : sidebarWidth + LAYOUT_SAFE_GAP;
+    const layoutTargets = [];
+
+    if (appRoot) {
+      appRoot.dataset.geoSidebarActive = "true";
+      appRoot.style.transition = "width 180ms ease, max-width 180ms ease";
+      appRoot.style.boxSizing = "border-box";
+      appRoot.style.width = `calc(100vw - ${rightOffset}px)`;
+      appRoot.style.maxWidth = `calc(100vw - ${rightOffset}px)`;
+      appRoot.style.minWidth = "0";
+      appRoot.style.overflowX = "hidden";
+      layoutTargets.push(appRoot);
+    }
+
     if (main) {
       main.dataset.geoSidebarActive = "true";
-      main.style.transition = "padding-right 180ms ease";
+      main.style.transition = "width 180ms ease, max-width 180ms ease";
       main.style.boxSizing = "border-box";
-      main.style.paddingRight = `${rightOffset}px`;
-      state.layoutTargets = [main];
+      main.style.width = "100%";
+      main.style.maxWidth = "100%";
+      layoutTargets.push(main);
     }
+    state.layoutTargets = layoutTargets;
 
     const mainColumn = findMainConversationColumn();
     if (!mainColumn) return;
