@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeepSeek GEO Risk Sidebar
 // @namespace    https://tampermonkey.net/
-// @version      0.5.1
+// @version      0.5.2
 // @description  Review latest DeepSeek answer sources, explain GEO risks, and add trusted source support for mentioned products/brands.
 // @author       huangtianle
 // @match        https://chat.deepseek.com/*
@@ -104,7 +104,7 @@
     generatedSupportPrompt: "",
     entityStatus: "等待实体识别...",
     viewportHandlerBound: false,
-    layoutTarget: null,
+    layoutTargets: [],
   };
 
   function log(...args) {
@@ -330,35 +330,59 @@
     autoResizeTextarea(textarea);
   }
 
-  function getLayoutTarget() {
-    const candidates = [
-      document.querySelector("main"),
-      document.querySelector('[role="main"]'),
-      document.querySelector("main")?.parentElement,
-      document.querySelector("body > div#__next"),
-      document.querySelector("body > div"),
-      document.body,
-    ].filter(Boolean);
-    return candidates[0] || document.body;
+  function getLayoutTargets() {
+    return Array.from(
+      new Set(
+        [
+          document.body,
+          document.querySelector("body > div#__next"),
+          document.querySelector("body > div"),
+          document.querySelector('[role="main"]'),
+          document.querySelector("main"),
+          document.querySelector("main")?.parentElement,
+        ].filter(Boolean)
+      )
+    );
+  }
+
+  function clearPageLayoutOffset() {
+    state.layoutTargets.forEach((node) => {
+      if (!node) return;
+      delete node.dataset.geoSidebarActive;
+      node.style.transition = "";
+      node.style.paddingRight = "";
+      node.style.marginRight = "";
+      node.style.width = "";
+      node.style.maxWidth = "";
+      node.style.boxSizing = "";
+    });
+    state.layoutTargets = [];
   }
 
   function applyPageLayoutOffset(collapsed) {
     const offset = collapsed ? SIDEBAR_COLLAPSED_OFFSET : SIDEBAR_OFFSET_WIDTH;
-    const node = getLayoutTarget();
-    if (!node || node === state.panel) return;
-    state.layoutTarget = node;
+    const targets = getLayoutTargets().filter((node) => node !== state.panel);
+    clearPageLayoutOffset();
     document.documentElement.style.setProperty("--geo-sidebar-offset", `${offset}px`);
-    node.dataset.geoSidebarActive = "true";
-    node.style.transition = "padding-right 180ms ease, margin-right 180ms ease";
-    if (node.tagName === "MAIN") {
-      node.style.paddingRight = "";
-    } else {
-      node.style.paddingRight = `${offset}px`;
-      const main = document.querySelector("main");
-      if (main && main !== node) {
-        main.dataset.geoSidebarActive = "true";
+    targets.forEach((node) => {
+      node.dataset.geoSidebarActive = "true";
+      node.style.transition = "padding-right 180ms ease, margin-right 180ms ease, width 180ms ease";
+      node.style.boxSizing = "border-box";
+
+      if (node === document.body) {
+        node.style.paddingRight = `${offset}px`;
+        return;
       }
-    }
+
+      if (node.tagName === "MAIN") {
+        node.style.marginRight = `${offset}px`;
+        node.style.maxWidth = `calc(100% - ${offset}px)`;
+        return;
+      }
+
+      node.style.paddingRight = `${offset}px`;
+    });
+    state.layoutTargets = targets;
   }
 
   function applySidebarState() {
@@ -655,6 +679,7 @@
         scrollbar-gutter: stable;
         -webkit-overflow-scrolling: touch;
         touch-action: pan-y;
+        overscroll-behavior-y: contain;
       }
 
       #${PANEL_ID}.is-collapsed {
@@ -769,13 +794,18 @@
       }
 
       #${PANEL_ID} .geo-select {
-        margin-top: 2px;
+        flex: 0 0 auto;
+        width: 16px;
+        height: 16px;
+        margin: 2px 0 0;
+        align-self: flex-start;
       }
 
       #${PANEL_ID} .geo-risk-main,
       #${PANEL_ID} .geo-entity-main {
         flex: 1;
         min-width: 0;
+        margin-left: 0;
       }
 
       #${PANEL_ID} .geo-risk-title,
@@ -808,6 +838,7 @@
         color: #93a3b8;
         font-size: 12px;
         word-break: break-word;
+        padding-left: 0;
       }
 
       #${PANEL_ID} .geo-risk-reason,
@@ -886,7 +917,6 @@
       }
 
       main[data-geo-sidebar-active="true"] {
-        padding-right: var(--geo-sidebar-offset, ${SIDEBAR_OFFSET_WIDTH}px) !important;
         box-sizing: border-box;
       }
     `;
@@ -981,6 +1011,9 @@
     bindPromptTextarea(state.elements.promptBox);
     bindPromptTextarea(state.elements.supportPromptBox);
     applySidebarState();
+    panel.addEventListener("wheel", (event) => {
+      event.stopPropagation();
+    }, { passive: true });
 
     panel.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-action]");
