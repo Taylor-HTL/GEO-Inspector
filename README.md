@@ -103,4 +103,4 @@
 
 ## License
 
-当前仓库未单独附加 License；若后续准备公开协作，建议补一个明确许可证。
+本项目当前使用 [MIT License](/Users/huangtianle/Library/Mobile%20Documents/com~apple~CloudDocs/research/GEO_detection_support/LICENSE)。
