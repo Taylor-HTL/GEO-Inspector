@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DeepSeek GEO Risk Sidebar
 // @namespace    https://tampermonkey.net/
-// @version      0.4.1
+// @version      0.5.0
 // @description  Review latest DeepSeek answer sources, explain GEO risks, and add trusted source support for mentioned products/brands.
 // @author       huangtianle
 // @match        https://chat.deepseek.com/*
@@ -23,7 +23,7 @@
   const PANEL_ID = "geo-risk-sidebar-panel";
   const STYLE_ID = "geo-risk-sidebar-style";
   const STORAGE_KEY_API = "geo.deepseek.apiKey";
-  const STORAGE_KEY_PANEL_LAYOUT = "geo.panelLayout";
+  const STORAGE_KEY_PANEL_COLLAPSED = "geo.panelCollapsed";
   const STORAGE_KEY_PANEL_SECTIONS = "geo.panelSections";
   const SCAN_DEBOUNCE_MS = 1800;
   const HIGH_RISK_THRESHOLD = 60;
@@ -31,14 +31,11 @@
   const MAX_ENTITIES_PER_SCAN = 12;
   const REQUEST_TIMEOUT_MS = 12000;
   const SCAN_CONCURRENCY = 3;
-  const PANEL_EDGE_GAP = 8;
-  const PANEL_DEFAULT_TOP = 84;
-  const PANEL_DEFAULT_RIGHT = 20;
-  const PANEL_DEFAULT_WIDTH = 400;
-  const PANEL_DEFAULT_HEIGHT = 760;
-  const PANEL_MIN_WIDTH = 340;
-  const PANEL_MAX_WIDTH = 680;
-  const PANEL_MIN_HEIGHT = 320;
+  const SIDEBAR_EXPANDED_WIDTH = 380;
+  const SIDEBAR_COLLAPSED_WIDTH = 56;
+  const SIDEBAR_SAFE_GAP = 16;
+  const SIDEBAR_OFFSET_WIDTH = 396;
+  const SIDEBAR_COLLAPSED_OFFSET = 64;
   const FIELD_WEIGHTS = {
     title: 40,
     url: 24,
@@ -107,8 +104,8 @@
     generatedPrompt: "",
     generatedSupportPrompt: "",
     entityStatus: "等待实体识别...",
-    interaction: null,
     viewportHandlerBound: false,
+    layoutTarget: null,
   };
 
   function log(...args) {
@@ -267,57 +264,16 @@
     }
   }
 
-  function getViewportPanelBounds() {
-    return {
-      maxWidth: Math.max(280, Math.min(PANEL_MAX_WIDTH, window.innerWidth - PANEL_EDGE_GAP * 2)),
-      maxHeight: Math.max(260, window.innerHeight - PANEL_EDGE_GAP * 2),
-    };
+  function loadSidebarCollapsedState() {
+    return window.localStorage.getItem(STORAGE_KEY_PANEL_COLLAPSED) === "true";
   }
 
-  function clampPanelRectToViewport(rect = {}) {
-    const { maxWidth, maxHeight } = getViewportPanelBounds();
-    const minWidth = Math.min(PANEL_MIN_WIDTH, maxWidth);
-    const minHeight = Math.min(PANEL_MIN_HEIGHT, maxHeight);
-    const width = Math.min(maxWidth, Math.max(minWidth, Number(rect.width) || PANEL_DEFAULT_WIDTH));
-    const height = Math.min(maxHeight, Math.max(minHeight, Number(rect.height) || PANEL_DEFAULT_HEIGHT));
-    const left = Math.min(
-      Math.max(PANEL_EDGE_GAP, Number(rect.left) || PANEL_EDGE_GAP),
-      Math.max(PANEL_EDGE_GAP, window.innerWidth - width - PANEL_EDGE_GAP)
-    );
-    const top = Math.min(
-      Math.max(PANEL_EDGE_GAP, Number(rect.top) || PANEL_EDGE_GAP),
-      Math.max(PANEL_EDGE_GAP, window.innerHeight - height - PANEL_EDGE_GAP)
-    );
-
-    return { left, top, width, height };
+  function saveSidebarCollapsedState(value) {
+    window.localStorage.setItem(STORAGE_KEY_PANEL_COLLAPSED, value ? "true" : "false");
   }
 
-  function getDefaultPanelLayout() {
-    const preferredHeight = Math.min(PANEL_DEFAULT_HEIGHT, window.innerHeight - 112);
-    const rect = clampPanelRectToViewport({
-      width: PANEL_DEFAULT_WIDTH,
-      height: preferredHeight,
-      top: PANEL_DEFAULT_TOP,
-      left: window.innerWidth - PANEL_DEFAULT_WIDTH - PANEL_DEFAULT_RIGHT,
-    });
-
-    return rect;
-  }
-
-  function loadPanelLayout() {
-    const stored = readStorageJson(STORAGE_KEY_PANEL_LAYOUT, null);
-    if (!stored) return getDefaultPanelLayout();
-    return clampPanelRectToViewport(stored);
-  }
-
-  function savePanelLayout() {
-    if (!state.panel) return;
-    const rect = state.panel.getBoundingClientRect();
-    writeStorageJson(STORAGE_KEY_PANEL_LAYOUT, clampPanelRectToViewport(rect));
-  }
-
-  function clearPanelLayout() {
-    window.localStorage.removeItem(STORAGE_KEY_PANEL_LAYOUT);
+  function clearSidebarCollapsedState() {
+    window.localStorage.removeItem(STORAGE_KEY_PANEL_COLLAPSED);
   }
 
   function loadPanelSections() {
@@ -340,20 +296,12 @@
     window.localStorage.removeItem(STORAGE_KEY_PANEL_SECTIONS);
   }
 
-  function updatePanelResponsiveState(panel, width) {
-    const nextWidth = Number(width) || panel.getBoundingClientRect().width || PANEL_DEFAULT_WIDTH;
-    panel.dataset.layoutSize = nextWidth < 430 ? "narrow" : nextWidth < 560 ? "medium" : "wide";
-  }
-
-  function applyPanelLayout(layout) {
-    if (!state.panel) return;
-    const rect = clampPanelRectToViewport(layout);
-    state.panel.style.left = `${rect.left}px`;
-    state.panel.style.top = `${rect.top}px`;
-    state.panel.style.width = `${rect.width}px`;
-    state.panel.style.height = `${rect.height}px`;
-    state.panel.style.right = "auto";
-    updatePanelResponsiveState(state.panel, rect.width);
+  function updatePanelResponsiveState(panel) {
+    if (!panel) return;
+    const width = panel.classList.contains("is-collapsed")
+      ? SIDEBAR_COLLAPSED_WIDTH
+      : SIDEBAR_EXPANDED_WIDTH;
+    panel.dataset.layoutSize = width < 430 ? "narrow" : width < 560 ? "medium" : "wide";
   }
 
   function getTextareaMaxHeight() {
@@ -383,16 +331,49 @@
     autoResizeTextarea(textarea);
   }
 
-  function clampAndPersistPanel() {
+  function getLayoutTarget() {
+    const candidates = [
+      document.querySelector("body > div#__next"),
+      document.querySelector("body > div"),
+      document.querySelector("main")?.parentElement,
+      document.querySelector("main"),
+      document.body,
+    ].filter(Boolean);
+    return candidates[0] || document.body;
+  }
+
+  function applyPageLayoutOffset(collapsed) {
+    const offset = collapsed ? SIDEBAR_COLLAPSED_OFFSET : SIDEBAR_OFFSET_WIDTH;
+    const node = getLayoutTarget();
+    if (!node || node === state.panel) return;
+    state.layoutTarget = node;
+    node.dataset.geoSidebarActive = "true";
+    node.style.transition = "padding-right 180ms ease";
+    node.style.paddingRight = `${offset}px`;
+  }
+
+  function applySidebarState() {
     if (!state.panel) return;
-    const rect = state.panel.getBoundingClientRect();
-    applyPanelLayout(rect);
-    savePanelLayout();
+    const collapsed = loadSidebarCollapsedState();
+    state.panel.classList.toggle("is-collapsed", collapsed);
+    state.panel.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    if (state.elements.collapseButton) {
+      state.elements.collapseButton.textContent = collapsed ? "展开" : "收起";
+      state.elements.collapseButton.setAttribute("aria-label", collapsed ? "展开侧边栏" : "收起侧边栏");
+    }
+    updatePanelResponsiveState(state.panel);
+    applyPageLayoutOffset(collapsed);
     refreshPromptTextareaHeights();
   }
 
-  function resetPanelLayoutAndSections() {
-    clearPanelLayout();
+  function toggleSidebarCollapsed() {
+    const next = !loadSidebarCollapsedState();
+    saveSidebarCollapsedState(next);
+    applySidebarState();
+  }
+
+  function resetSidebarState() {
+    clearSidebarCollapsedState();
     clearPanelSections();
     if (state.elements.riskSection) {
       state.elements.riskSection.open = true;
@@ -400,10 +381,10 @@
     if (state.elements.trustedSection) {
       state.elements.trustedSection.open = true;
     }
-    applyPanelLayout(getDefaultPanelLayout());
     savePanelSections();
+    applySidebarState();
     refreshPromptTextareaHeights();
-    updateStatus("GEO 面板位置、大小和展开状态已重置。");
+    updateStatus("GEO 侧边栏状态已重置。");
   }
 
   function getRootContainer() {
@@ -550,23 +531,23 @@
         position: fixed;
         display: flex;
         flex-direction: column;
-        top: 84px;
-        right: 20px;
-        width: 400px;
-        height: min(760px, calc(100vh - 112px));
-        min-width: 340px;
-        max-width: min(680px, calc(100vw - 16px));
-        min-height: 320px;
-        max-height: calc(100vh - 16px);
+        top: 0;
+        right: 0;
+        width: ${SIDEBAR_EXPANDED_WIDTH}px;
+        height: 100vh;
         overflow: hidden;
         z-index: 999999;
         border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 16px;
+        border-radius: 0;
+        border-right: 0;
+        border-top: 0;
+        border-bottom: 0;
         background: rgba(15, 23, 42, 0.94);
         color: #e5edf7;
-        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.32);
+        box-shadow: -16px 0 40px rgba(0, 0, 0, 0.22);
         backdrop-filter: blur(12px);
         font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        transition: width 180ms ease, transform 180ms ease;
       }
 
       #${PANEL_ID} * {
@@ -589,9 +570,7 @@
         gap: 12px;
         padding: 14px 16px 12px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-        cursor: grab;
         user-select: none;
-        touch-action: none;
       }
 
       #${PANEL_ID} .geo-panel-title {
@@ -663,6 +642,40 @@
         padding: 12px 16px 36px;
         overscroll-behavior: contain;
         scrollbar-gutter: stable;
+      }
+
+      #${PANEL_ID}.is-collapsed {
+        width: ${SIDEBAR_COLLAPSED_WIDTH}px;
+      }
+
+      #${PANEL_ID}.is-collapsed .geo-panel-subtitle,
+      #${PANEL_ID}.is-collapsed .geo-panel-hint,
+      #${PANEL_ID}.is-collapsed .geo-status,
+      #${PANEL_ID}.is-collapsed .geo-panel-body,
+      #${PANEL_ID}.is-collapsed .geo-panel-actions .geo-btn:not([data-action="toggle-sidebar"]) {
+        display: none !important;
+      }
+
+      #${PANEL_ID}.is-collapsed .geo-panel-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        padding: 12px 10px;
+      }
+
+      #${PANEL_ID}.is-collapsed .geo-panel-title {
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+        font-size: 14px;
+        margin: 0 auto;
+      }
+
+      #${PANEL_ID}.is-collapsed .geo-panel-actions {
+        justify-content: center;
+      }
+
+      #${PANEL_ID}.is-collapsed .geo-panel-actions .geo-btn[data-action="toggle-sidebar"] {
+        width: 100%;
       }
 
       #${PANEL_ID} details {
@@ -849,39 +862,12 @@
         color: #9aa9bd;
       }
 
-      #${PANEL_ID}[data-layout-size="medium"] .geo-actions {
+      #${PANEL_ID}[data-layout-size="medium"]:not(.is-collapsed) .geo-actions {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
-      #${PANEL_ID}[data-layout-size="narrow"] .geo-actions {
+      #${PANEL_ID}[data-layout-size="narrow"]:not(.is-collapsed) .geo-actions {
         grid-template-columns: minmax(0, 1fr);
-      }
-
-      #${PANEL_ID} .geo-resize-handle {
-        position: absolute;
-        right: 0;
-        bottom: 0;
-        width: 20px;
-        height: 20px;
-        cursor: nwse-resize;
-        touch-action: none;
-      }
-
-      #${PANEL_ID} .geo-resize-handle::before {
-        content: "";
-        position: absolute;
-        inset: 6px 4px 4px 6px;
-        border-right: 2px solid rgba(159, 214, 255, 0.65);
-        border-bottom: 2px solid rgba(159, 214, 255, 0.65);
-        border-bottom-right-radius: 4px;
-      }
-
-      body.geo-panel-interacting {
-        user-select: none !important;
-      }
-
-      body.geo-panel-interacting #${PANEL_ID} .geo-panel-header {
-        cursor: grabbing;
       }
     `;
 
@@ -901,9 +887,10 @@
         <div>
           <div class="geo-panel-title">GEO Inspector</div>
           <div class="geo-panel-subtitle">DeepSeek 最近一次回复的信源风险扫描</div>
-          <div class="geo-panel-hint">可直接拖动与缩放浮窗，布局会自动记住</div>
+          <div class="geo-panel-hint">右侧侧边栏，可折叠收起</div>
         </div>
         <div class="geo-panel-actions">
+          <button type="button" class="geo-btn" data-action="toggle-sidebar">收起</button>
           <button type="button" class="geo-btn" data-action="config-api">API</button>
           <button type="button" class="geo-btn geo-btn-primary" data-action="scan-all">扫描</button>
         </div>
@@ -956,7 +943,6 @@
           </div>
         </details>
       </div>
-      <div class="geo-resize-handle" data-role="resize-handle" aria-hidden="true"></div>
     `;
 
     document.body.appendChild(panel);
@@ -970,16 +956,21 @@
     state.elements.supportPromptBox = panel.querySelector('[data-role="support-prompt-box"]');
     state.elements.riskSection = panel.querySelector('[data-role="risk-section"]');
     state.elements.trustedSection = panel.querySelector('[data-role="trusted-section"]');
+    state.elements.collapseButton = panel.querySelector('[data-action="toggle-sidebar"]');
 
     bindPromptTextarea(state.elements.promptBox);
     bindPromptTextarea(state.elements.supportPromptBox);
-    applyPanelLayout(loadPanelLayout());
+    applySidebarState();
 
     panel.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-action]");
       if (!button) return;
 
       const action = button.getAttribute("data-action");
+      if (action === "toggle-sidebar") {
+        toggleSidebarCollapsed();
+        return;
+      }
       if (action === "config-api") {
         promptForApiKey();
         return;
@@ -1039,11 +1030,9 @@
     state.elements.riskSection?.addEventListener("toggle", savePanelSections);
     state.elements.trustedSection?.addEventListener("toggle", savePanelSections);
 
-    setupPanelInteractions(panel);
-
     if (!state.viewportHandlerBound) {
       const handleViewportChange = () => {
-        clampAndPersistPanel();
+        applySidebarState();
       };
       window.addEventListener("resize", handleViewportChange);
       window.addEventListener("orientationchange", handleViewportChange);
@@ -2048,85 +2037,6 @@
     }
   }
 
-  function setupPanelInteractions(panel) {
-    const header = panel.querySelector(".geo-panel-header");
-    const resizeHandle = panel.querySelector('[data-role="resize-handle"]');
-    if (!header || !resizeHandle) return;
-
-    const stopInteraction = (event) => {
-      if (!state.interaction) return;
-      if (event && state.interaction.pointerId !== undefined && event.pointerId !== state.interaction.pointerId) {
-        return;
-      }
-
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", stopInteraction);
-      window.removeEventListener("pointercancel", stopInteraction);
-      document.body.classList.remove("geo-panel-interacting");
-      document.body.style.cursor = "";
-      state.interaction = null;
-      savePanelLayout();
-      refreshPromptTextareaHeights();
-    };
-
-    const handlePointerMove = (event) => {
-      if (!state.interaction || state.interaction.pointerId !== event.pointerId) return;
-
-      const deltaX = event.clientX - state.interaction.startX;
-      const deltaY = event.clientY - state.interaction.startY;
-
-      if (state.interaction.mode === "drag") {
-        applyPanelLayout({
-          left: state.interaction.startLeft + deltaX,
-          top: state.interaction.startTop + deltaY,
-          width: state.interaction.startWidth,
-          height: state.interaction.startHeight,
-        });
-      } else if (state.interaction.mode === "resize") {
-        applyPanelLayout({
-          left: state.interaction.startLeft,
-          top: state.interaction.startTop,
-          width: state.interaction.startWidth + deltaX,
-          height: state.interaction.startHeight + deltaY,
-        });
-      }
-
-      event.preventDefault();
-    };
-
-    const startInteraction = (event, mode) => {
-      const rect = panel.getBoundingClientRect();
-      state.interaction = {
-        mode,
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        startLeft: rect.left,
-        startTop: rect.top,
-        startWidth: rect.width,
-        startHeight: rect.height,
-      };
-
-      document.body.classList.add("geo-panel-interacting");
-      document.body.style.cursor = mode === "resize" ? "nwse-resize" : "grabbing";
-      window.addEventListener("pointermove", handlePointerMove, { passive: false });
-      window.addEventListener("pointerup", stopInteraction);
-      window.addEventListener("pointercancel", stopInteraction);
-      event.preventDefault();
-    };
-
-    header.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
-      if (event.target.closest("button")) return;
-      startInteraction(event, "drag");
-    });
-
-    resizeHandle.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
-      startInteraction(event, "resize");
-    });
-  }
-
   async function scanAll({ force = false } = {}) {
     await scanSources({ force });
     await scanEntitySupport({ force });
@@ -2175,8 +2085,8 @@
       generateSupportPrompt();
     });
 
-    GM_registerMenuCommand("重置 GEO 面板位置与大小", () => {
-      resetPanelLayoutAndSections();
+    GM_registerMenuCommand("重置 GEO 侧边栏状态", () => {
+      resetSidebarState();
     });
   }
 
